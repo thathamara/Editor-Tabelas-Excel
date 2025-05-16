@@ -1,4 +1,12 @@
-window.state = window.state || {
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Configurações globais
+const AppConfig = {
+    API_URL: '/api/excel-tables', // Mantenha isso consistente
+    CSRF_TOKEN: document.querySelector('meta[name="csrf-token"]').content
+};
+
+     window.state = window.state || {
     tableData: [],
     headers: [],
     currentPage: 0,
@@ -11,26 +19,6 @@ window.state = window.state || {
     }
 };
 
-document.addEventListener('DOMContentLoaded', function() {
-    // Configurações globais
-    const AppConfig = {
-        API_URL: '/api/excel-tables',
-        CSRF_TOKEN: document.querySelector('meta[name="csrf-token"]').content
-    };
-
-    // Estado global completo
-    window.state = {
-        tableData: [],
-        headers: [],
-        currentPage: 0,
-        rowsPerPage: 50,
-        pdfConfig: {
-            orientation: 'landscape',
-            unit: 'mm',
-            format: 'a3',
-            margins: { top: 10, left: 10, right: 10, bottom: 10 }
-        }
-    };
 
     // Elementos do DOM organizados
     const elements = {
@@ -47,6 +35,7 @@ document.addEventListener('DOMContentLoaded', function() {
         saveTableBtn: document.getElementById('save-table-btn'),
         deleteTableBtn: document.getElementById('delete-table-btn'),
         saveModal: document.getElementById('save-modal'),
+        closeSaveModalBtn: document.getElementById('close-save-modal'),
         confirmSaveBtn: document.getElementById('confirm-save-btn'),
         tableNameInput: document.getElementById('table-name'),
         imageWarning: document.getElementById('image-warning')
@@ -57,113 +46,130 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- Funções Principais ---
 
-    async function loadSavedTables() {
-        try {
-            const response = await fetch(AppConfig.API_URL, {
-                headers: {
-                    'Accept': 'application/json',
-                    'X-CSRF-TOKEN': AppConfig.CSRF_TOKEN
-                }
-            });
-            
-            if (!response.ok) throw new Error(await response.text());
-            
-            const tables = await response.json();
-            updateSavedTablesDropdown(tables);
-        } catch (error) {
-            showError('Erro ao carregar tabelas', error);
-        }
-    }
 
-    async function saveTable(tableName) {
-        try {
-            const response = await fetch(AppConfig.API_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': AppConfig.CSRF_TOKEN
-                },
-                body: JSON.stringify({
-                    name: tableName,
-                    headers: window.state.headers,
-                    data: window.state.tableData
-                })
-            });
-
-            if (!response.ok) throw new Error(await response.text());
-            
-            return await response.json();
-        } catch (error) {
-            showError('Erro ao salvar tabela', error);
-            throw error;
-        }
+async function loadSavedTables() {
+    try {
+        const response = await fetch(AppConfig.API_URL, {
+            headers: {
+                'Accept': 'application/json',
+                'X-CSRF-TOKEN': AppConfig.CSRF_TOKEN
+            }
+        });
+        
+        if (!response.ok) throw new Error(await response.text());
+        
+        const tables = await response.json();
+        updateSavedTablesDropdown(tables);
+    } catch (error) {
+        showError('Erro ao carregar tabelas', error);
     }
+}
+
+async function saveTable(tableName) {
+    try {
+        showLoading(true);
+        
+        // Cria um FormData para enviar o arquivo
+        const formData = new FormData();
+        formData.append('name', tableName);
+        
+        // Converte os dados atuais para um arquivo Excel
+        const wb = XLSX.utils.book_new();
+        const exportData = [window.state.headers, ...window.state.tableData];
+        const ws = XLSX.utils.aoa_to_sheet(exportData);
+        XLSX.utils.book_append_sheet(wb, ws, "Dados");
+        
+        // Converte para blob e adiciona ao FormData
+        const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+        const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        formData.append('file', blob, `${tableName}.xlsx`);
+        
+        const response = await fetch(AppConfig.API_URL, {
+            method: 'POST',
+            headers: {
+                'X-CSRF-TOKEN': AppConfig.CSRF_TOKEN
+            },
+            body: formData
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.message || 'Erro ao salvar tabela');
+        }
+        
+        return await response.json();
+        
+    } catch (error) {
+        console.error('Erro ao salvar tabela:', error);
+        throw error;
+    } finally {
+        showLoading(false);
+    }
+}
 
     async function loadTable(tableId) {
-        try {
-            const response = await fetch(`${AppConfig.API_URL}/${tableId}`, {
-                headers: {
-                    'Accept': 'application/json',
-                    'X-CSRF-TOKEN': AppConfig.CSRF_TOKEN
-                }
-            });
-            
-            if (!response.ok) throw new Error('Tabela não encontrada');
-            
-            const table = await response.json();
-            
-            if (!table.headers || !table.data) {
-                throw new Error('Formato de tabela inválido');
-            }
-            
-            window.state.headers = table.headers;
-            window.state.tableData = table.data;
-            window.state.currentPage = 0;
-            
-            renderPaginatedTable();
-            elements.tableContainer.classList.remove('hidden');
-            
-        } catch (error) {
-            throw error;
+ try {
+        showLoading(true);
+        
+        // Carrega informações básicas
+        const tableInfo = await fetch(`${AppConfig.API_URL}/${tableId}`).then(r => r.json());
+        
+        // Se tiver file_path, carrega via endpoint /load
+        if (tableInfo.file_path) {
+            const fullData = await fetch(`${AppConfig.API_URL}/${tableId}/load`).then(r => r.json());
+            window.state.headers = fullData.headers;
+            window.state.tableData = fullData.data;
+        } 
+        // Se não, usa dados diretamente do JSON
+        else {
+            window.state.headers = tableInfo.headers || [];
+            window.state.tableData = tableInfo.data || [];
         }
+        
+        renderPaginatedTable();
+        
+    } catch (error) {
+        console.error('Erro ao carregar tabela:', error);
+        alert(error.message);
+    } finally {
+        showLoading(false);
     }
+}
 
     // --- Event Listeners ---
 
-    elements.loadSavedBtn.addEventListener('click', async function() {
-        const tableId = elements.savedTablesSelect.value;
-        if (!tableId) {
-            alert('Por favor, selecione uma tabela.');
-            return;
-        }
-        
-        showLoading(true);
-        
-        try {
-            await loadTable(tableId);
-        } catch (error) {
-            console.error('Erro ao carregar tabela:', error);
-            alert(error.message);
-        } finally {
-            showLoading(false);
-        }
-    });
+   elements.loadSavedBtn.addEventListener('click', async function() {
+    const tableId = elements.savedTablesSelect.value;
+    if (!tableId) {
+        alert('Por favor, selecione uma tabela.');
+        return;
+    }
+    
+    try {
+        await loadTable(tableId);
+    } catch (error) {
+        console.error('Erro ao carregar tabela:', error);
+        alert(error.message);
+    }
+});
 
+console.log('Current state:', window.state);
+if (elements.saveTableBtn) {
     elements.saveTableBtn.addEventListener('click', function() {
-        if (!window.state.tableData || window.state.tableData.length === 0) {
+        if (!window.state?.tableData || window.state.tableData.length === 0) {
             alert('Não há dados para salvar. Carregue uma tabela primeiro.');
             return;
         }
         
-        if (!window.state.headers || window.state.headers.length === 0) {
-            alert('Cabeçalhos não definidos. Carregue um arquivo válido primeiro.');
-            return;
+        if (elements.saveModal && elements.tableNameInput) {
+            elements.saveModal.classList.remove('hidden');
+            elements.tableNameInput.value = '';
+            setTimeout(() => elements.tableNameInput.focus(), 100);
         }
-        
-        elements.saveModal.classList.remove('hidden');
-        elements.tableNameInput.value = '';
-        setTimeout(() => elements.tableNameInput.focus(), 100);
     });
+} else {
+    console.error('Botão saveTableBtn não encontrado');
+}
 
     elements.confirmSaveBtn.addEventListener('click', async function() {
         const tableName = elements.tableNameInput.value.trim();
@@ -188,6 +194,12 @@ document.addEventListener('DOMContentLoaded', function() {
             showLoading(false);
         }
     });
+
+    
+elements.closeSaveModalBtn.addEventListener('click', () => {
+  elements.saveModal.classList.add('hidden');   // esconde o modal
+  elements.tableNameInput.value = '';           // limpa o campo (opcional)
+});
 
     elements.deleteTableBtn.addEventListener('click', async function() {
         const tableId = elements.savedTablesSelect.value;
@@ -532,16 +544,20 @@ function showSheetSelector(workbook, resolve, reject) {
         alert(`${context}: ${error.message}`);
     }
 
-    function updateSavedTablesDropdown(tables) {
-        elements.savedTablesSelect.innerHTML = '<option value="">-- Selecione uma tabela --</option>';
-        
-        tables.forEach(table => {
-            const option = document.createElement('option');
-            option.value = table.id;
-            option.textContent = table.name || `Tabela ${table.id}`;
-            elements.savedTablesSelect.appendChild(option);
-        });
-    }
+function updateSavedTablesDropdown(tables) {
+    elements.savedTablesSelect.innerHTML = '<option value="">-- Selecione uma tabela --</option>';
+    
+    tables.forEach(table => {
+        const preview = table.preview_data || {};
+        const option = document.createElement('option');
+        option.value = table.id;
+        option.textContent = `${table.name} (${preview.headers ? preview.headers.join(', ') : 'sem headers'})`;
+        option.dataset.type = preview.type || 'unknown';
+        elements.savedTablesSelect.appendChild(option);
+    });
+}
+
+});
 
     // Função global para atualizar células
 window.updateCell = function(input) {
@@ -557,5 +573,3 @@ window.updateCell = function(input) {
             window.state.tableData[row][col] = input.value;
         }
     };
-});
-

@@ -9,5 +9,8 @@ Route::get('/', function () {
 });
 
 // Rotas para o CRUD de tabelas (frontend)
-Route::get('/tabelas', [ExcelTableController::class, 'indexView'])->name('tabelas.index');
-Route::get('/tabelas/criar', [ExcelTableController::class, 'createView'])->name('tabelas.create');
+// Route::get('/tabelas', [ExcelTableController::class, 'indexView'])->name('tabelas.index');
+// Route::get('/tabelas/criar', [ExcelTableController::class, 'createView'])->name('tabelas.create');
+
+Route::get('/tabelas', [ExcelTableController::class, 'indexView']);
+Route::get('/tabelas/criar', [ExcelTableController::class, 'createView']);

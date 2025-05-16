@@ -65,12 +65,12 @@
             <div class="spinner"></div>
             <p>Processando...</p>
         </div>
-        <div id="modals-container"></div>
+
         
         <!-- Modal para salvar tabela -->
         <div id="save-modal" class="modal hidden">
             <div class="modal-content">
-                <span class="close">&times;</span>
+                <span id="close-save-modal" class="close">&times;</span>
                 <h3>Salvar Tabela</h3>
                 <input type="text" id="table-name" placeholder="Digite um nome para a tabela">
                 <button id="confirm-save-btn">Salvar</button>

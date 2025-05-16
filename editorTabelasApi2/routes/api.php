@@ -1,11 +1,12 @@
 <?php
-use App\Http\Controllers\ExcelTableController;
-use Illuminate\Support\Facades\Route;
 
-// Route::prefix('api')->group(function () {
-//     Route::apiResource('tabelas', ExcelTableController::class);
-    Route::get('/excel-tables', [ExcelTableController::class, 'excelTables']);
-    // Ou rotas manuais (como você já tinha):
-    // Route::get('/tabelas', [ExcelTableController::class, 'index']);
-    // Route::post('/tabelas', [ExcelTableController::class, 'store']);
-// });
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\ExcelTableController;
+
+    Route::get('/excel-tables', [ExcelTableController::class, 'index']);
+    Route::get('/excel-tables/{excelTable}', [ExcelTableController::class, 'show']);
+    Route::get('/excel-tables/{excelTable}/load', [ExcelTableController::class, 'loadFullFile']);
+
+    Route::post('/excel-tables', [ExcelTableController::class, 'store']);
+    Route::put('/excel-tables/{excelTable}', [ExcelTableController::class, 'update']);
+    Route::delete('/excel-tables/{excelTable}', [ExcelTableController::class, 'destroy']);
