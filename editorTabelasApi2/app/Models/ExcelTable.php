@@ -6,20 +6,29 @@ use Illuminate\Database\Eloquent\Model;
 
 class ExcelTable extends Model
 {
- protected $fillable = [
+    protected $fillable = [
         'name',
         'file_path',
         'original_name',
         'file_size',
         'preview_data',
-        'headers', // mantenha se ainda for usado
-        'data' // mantenha se ainda for usado
+        'headers',
+        'data'
     ];
     
-protected $casts = [
-    'preview_data' => 'array',
-    'headers' => 'array',
-    'data' => 'array',
-    'file_size' => 'integer'
-];
+    protected $casts = [
+        'preview_data' => 'array',
+        'headers' => 'array',
+        'data' => 'array',
+        'file_size' => 'integer'
+    ];
+    
+    // Adicione esta propriedade
+    protected $dateFormat = 'Y-m-d H:i:s.v';
+    
+    // E esta para garantir o formato correto
+    protected $dates = [
+        'created_at',
+        'updated_at'
+    ];
 }

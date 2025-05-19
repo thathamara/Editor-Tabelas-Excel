@@ -107,30 +107,59 @@ async function saveTable(tableName) {
     }
 }
 
-    async function loadTable(tableId) {
- try {
+  async function loadTable(id) {
+    try {
         showLoading(true);
-        
-        // Carrega informações básicas
-        const tableInfo = await fetch(`${AppConfig.API_URL}/${tableId}`).then(r => r.json());
-        
-        // Se tiver file_path, carrega via endpoint /load
+        console.log(`Iniciando carregamento da tabela ID: ${id}`);
+
+        // 1. Carrega informações básicas da tabela
+        const tableInfo = await fetch(`${AppConfig.API_URL}/${id}`)
+            .then(response => {
+                if (!response.ok) throw new Error(`Erro HTTP: ${response.status}`);
+                return response.json();
+            });
+        console.log('Informações básicas:', tableInfo);
+
+        // 2. Carrega os dados completos
+        let fullData;
         if (tableInfo.file_path) {
-            const fullData = await fetch(`${AppConfig.API_URL}/${tableId}/load`).then(r => r.json());
-            window.state.headers = fullData.headers;
-            window.state.tableData = fullData.data;
-        } 
-        // Se não, usa dados diretamente do JSON
-        else {
-            window.state.headers = tableInfo.headers || [];
-            window.state.tableData = tableInfo.data || [];
+            console.log('Carregando dados do arquivo...');
+            const loadResponse = await fetch(`${AppConfig.API_URL}/${id}/load`);
+            if (!loadResponse.ok) {
+                const error = await loadResponse.json();
+                throw new Error(error.message || 'Erro ao carregar arquivo');
+            }
+            fullData = await loadResponse.json();
+            console.log('Dados do arquivo:', fullData);
+        } else {
+            console.log('Carregando dados diretamente do banco');
+            fullData = {
+                headers: tableInfo.headers || [],
+                data: tableInfo.data || []
+            };
         }
-        
+
+        // 3. Validação e preparação dos dados
+        if (!fullData || !fullData.headers || !fullData.data) {
+            throw new Error('Dados da tabela inválidos');
+        }
+
+        // Garante que os dados são arrays
+        window.state.headers = Array.isArray(fullData.headers) ? fullData.headers : [];
+        window.state.tableData = Array.isArray(fullData.data) ? fullData.data : [];
+        window.state.currentPage = 0;
+
+        console.log('Dados preparados para renderização:', {
+            headers: window.state.headers,
+            tableData: window.state.tableData
+        });
+
+        // 4. Renderiza a tabela
         renderPaginatedTable();
         
     } catch (error) {
-        console.error('Erro ao carregar tabela:', error);
-        alert(error.message);
+        console.error('Erro detalhado:', error);
+        alert(`Erro ao carregar tabela: ${error.message}`);
     } finally {
         showLoading(false);
     }
@@ -138,10 +167,10 @@ async function saveTable(tableName) {
 
     // --- Event Listeners ---
 
-   elements.loadSavedBtn.addEventListener('click', async function() {
-    const tableId = elements.savedTablesSelect.value;
+document.getElementById('load-saved-btn')?.addEventListener('click', async function() {
+    const tableId = document.getElementById('saved-tables').value;
     if (!tableId) {
-        alert('Por favor, selecione uma tabela.');
+        alert('Por favor, selecione uma tabela para carregar');
         return;
     }
     
@@ -149,7 +178,7 @@ async function saveTable(tableName) {
         await loadTable(tableId);
     } catch (error) {
         console.error('Erro ao carregar tabela:', error);
-        alert(error.message);
+        alert(`Erro: ${error.message}`);
     }
 });
 
@@ -474,48 +503,71 @@ function showSheetSelector(workbook, resolve, reject) {
     }
 
     function renderPaginatedTable() {
-        const start = window.state.currentPage * window.state.rowsPerPage;
-        const end = start + window.state.rowsPerPage;
-        const pageData = window.state.tableData.slice(start, end);
+    console.log('Iniciando renderização...');
+    
+    // Garante arrays válidos
+    const headers = Array.isArray(window.state.headers) ? window.state.headers : [];
+    const tableData = Array.isArray(window.state.tableData) ? window.state.tableData : [];
+    
+    console.log('Headers:', headers);
+    console.log('Primeira linha de dados:', tableData[0]);
+
+    const start = window.state.currentPage * window.state.rowsPerPage;
+    const end = start + window.state.rowsPerPage;
+    const pageData = tableData.slice(start, end);
+    
+    // Gera o HTML da tabela
+    let html = `
+        <div class="table-controls">
+            <button id="prev-page" ${window.state.currentPage === 0 ? 'disabled' : ''}>Anterior</button>
+            <span>Página ${window.state.currentPage + 1} de ${Math.ceil(tableData.length / window.state.rowsPerPage)}</span>
+            <button id="next-page" ${end >= tableData.length ? 'disabled' : ''}>Próxima</button>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-bordered">
+                <thead>
+                    <tr>${headers.map(h => `<th>${h || ''}</th>`).join('')}</tr>
+                </thead>
+                <tbody>
+    `;
+    
+    // Adiciona as linhas da tabela
+    pageData.forEach((row, rowIndex) => {
+        html += '<tr>';
         
-        let html = `
-            <div class="table-controls">
-                <button id="prev-page" ${window.state.currentPage === 0 ? 'disabled' : ''}>Anterior</button>
-                <span>Página ${window.state.currentPage + 1} de ${Math.ceil(window.state.tableData.length / window.state.rowsPerPage)}</span>
-                <button id="next-page" ${end >= window.state.tableData.length ? 'disabled' : ''}>Próxima</button>
-            </div>
-            <div class="table-responsive">
-                <table>
-                    <thead>
-                        <tr>${window.state.headers.map(h => `<th>${h}</th>`).join('')}</tr>
-                    </thead>
-                    <tbody>
-        `;
-        
-        pageData.forEach((row, rowIndex) => {
-            html += '<tr>';
-            row.forEach((cell, cellIndex) => {
-                html += `
-                    <td>
-                        <input type="text" value="${cell || ''}" 
-                               data-row="${start + rowIndex}" 
-                               data-col="${cellIndex}"
-                               onchange="updateCell(this)">
-                    </td>
-                `;
-            });
-            html += `<td><button class="delete-row" data-row="${start + rowIndex}">×</button></td>`;
-            html += '</tr>';
+        // Garante que cada linha tenha células para todos os headers
+        headers.forEach((_, colIndex) => {
+            const cellValue = row[colIndex] !== undefined ? row[colIndex] : '';
+            html += `
+                <td>
+                    <input type="text" value="${cellValue}" 
+                           data-row="${start + rowIndex}" 
+                           data-col="${colIndex}"
+                           onchange="updateCell(this)">
+                </td>
+            `;
         });
         
-        html += `
-                    </tbody>
-                </table>
-            </div>
-        `;
+        html += `<td><button class="delete-row" data-row="${start + rowIndex}">×</button></td>`;
+        html += '</tr>';
+    });
+    
+    html += `
+                </tbody>
+            </table>
+        </div>
+    `;
+    
+    // Debug: verifique o HTML gerado
+    console.log('HTML gerado:', html);
+    
+    // Injeta no DOM
+    const tableWrapper = document.getElementById('table-wrapper');
+    if (tableWrapper) {
+        tableWrapper.innerHTML = html;
+        console.log('HTML injetado com sucesso');
         
-        elements.tableWrapper.innerHTML = html;
-        
+        // Configura eventos de paginação
         document.getElementById('prev-page')?.addEventListener('click', () => {
             window.state.currentPage--;
             renderPaginatedTable();
@@ -526,6 +578,7 @@ function showSheetSelector(workbook, resolve, reject) {
             renderPaginatedTable();
         });
         
+        // Configura eventos de deletar linha
         document.querySelectorAll('.delete-row').forEach(btn => {
             btn.addEventListener('click', function() {
                 const rowIndex = parseInt(this.getAttribute('data-row'));
@@ -533,7 +586,10 @@ function showSheetSelector(workbook, resolve, reject) {
                 renderPaginatedTable();
             });
         });
+    } else {
+        console.error('Elemento table-wrapper não encontrado no DOM');
     }
+}
 
     function showLoading(show) {
         elements.loading.style.display = show ? 'flex' : 'none';

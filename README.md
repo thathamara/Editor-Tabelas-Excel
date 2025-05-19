@@ -135,3 +135,4 @@ Se encontrar algum erro ou comportamento inesperado, por favor abra uma [issue n
 ---
 
 URL local:http://localhost:8000/tabelas
+URL para api local:http://127.0.0.1:8000/api/excel-tables/8/load

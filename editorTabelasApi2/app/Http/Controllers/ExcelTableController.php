@@ -1,6 +1,8 @@
 <?php
 
 namespace App\Http\Controllers;
+
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use Illuminate\Support\Facades\DB;
 use App\Models\ExcelTable; // Certifique-se de importar o model
 use Illuminate\Http\Request;
@@ -31,56 +33,43 @@ public function store(Request $request)
 {
     \DB::beginTransaction();
     try {
-        // Validação para ambos os formatos
         $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'file' => 'nullable|file|mimes:xlsx,xml,csv|max:102400',
+            'name' => 'required|string|min:2|max:255', // Mudei para min:2
+            'file' => 'nullable|file|mimes:xlsx,xml,csv,xls|max:102400',
             'headers' => 'nullable|array',
             'data' => 'nullable|array'
         ]);
 
+        // Crie o array de dados básico
+        $data = [
+            'name' => $validated['name'],
+            'headers' => $validated['headers'] ?? [],
+            'data' => $validated['data'] ?? []
+        ];
+
         if ($request->hasFile('file')) {
-            // Nova implementação (com arquivo)
             $file = $request->file('file');
-            $originalName = $file->getClientOriginalName();
-            $extension = strtolower($file->getClientOriginalExtension());
-            
-            $fileName = time() . '_' . uniqid() . '.' . $extension;
-            $path = $file->storeAs('excel_files', $fileName, 'public');
-            
-            $previewData = $this->extractPreviewData($file, $extension);
-            
-            $table = ExcelTable::create([
-                'name' => $validated['name'],
-                'file_path' => $path,
-                'original_name' => $originalName,
+            $data = array_merge($data, [
+                'file_path' => $file->storeAs('excel_files', time().'_'.uniqid().'.'.$file->getClientOriginalExtension(), 'public'),
+                'original_name' => $file->getClientOriginalName(),
                 'file_size' => $file->getSize(),
-                'preview_data' => $previewData,
-                'headers' => [], // mantém compatibilidade
-                'data' => [] // mantém compatibilidade
-            ]);
-        } else {
-            // Implementação antiga (apenas dados)
-            $table = ExcelTable::create([
-                'name' => $validated['name'],
-                'headers' => $validated['headers'],
-                'data' => $validated['data'],
-                'file_path' => null, // novos campos como null
-                'original_name' => null,
-                'file_size' => null,
-                'preview_data' => null
+                'preview_data' => $this->extractPreviewData($file, $file->getClientOriginalExtension())
             ]);
         }
+
+        // Deixe o Laravel cuidar dos timestamps
+        $table = ExcelTable::create($data);
 
         \DB::commit();
         return response()->json($table, 201);
 
     } catch (\Exception $e) {
         \DB::rollBack();
-        \Log::error("Erro ao salvar tabela: " . $e->getMessage());
+        \Log::error("Erro detalhado: " . $e->getMessage());
         return response()->json([
             'message' => 'Erro ao salvar tabela',
-            'error' => env('APP_DEBUG') ? $e->getMessage() : null
+            'error' => env('APP_DEBUG') ? $e->getMessage() : null,
+            'trace' => env('APP_DEBUG') ? $e->getTraceAsString() : null
         ], 500);
     }
 }
@@ -90,7 +79,7 @@ public function store(Request $request)
         try {
             $filePath = $file->getRealPath();
             
-            if ($extension === 'xlsx' || $extension === 'csv') {
+            if ($extension === 'xlsx' || $extension === 'csv' || $extension === 'xls') {
                 $spreadsheet = IOFactory::load($filePath);
                 $sheet = $spreadsheet->getActiveSheet();
                 
@@ -124,50 +113,80 @@ public function store(Request $request)
         }
     }
 
-public function loadFullFile(ExcelTable $excelTable)
-    {
-        try {
-            $filePath = storage_path('app/public/' . $excelTable->file_path);
+public function loadFullFile($id) // O parâmetro $id já está definido aqui
+{
+    try {
+        \Log::info("Carregando arquivo", [
+            'id' => $id, // Usando o parâmetro $id recebido
+            'action' => 'loadFullFile'
+        ]);
+
+        $excelTable = ExcelTable::findOrFail($id);
+        
+        if (!$excelTable->file_path) {
+            return response()->json([
+                'headers' => $excelTable->headers ?? [],
+                'data' => $excelTable->data ?? [],
+                'type' => 'database'
+            ]);
+        }
+
+        $filePath = storage_path('app/public/' . $excelTable->file_path);
+        
+        if (!file_exists($filePath)) {
+            \Log::error("Arquivo não encontrado", ['path' => $filePath]);
+            return response()->json([
+                'error' => 'Arquivo não encontrado',
+                'path' => $excelTable->file_path
+            ], 404);
+        }
+
+        $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+        
+        if (in_array($extension, ['xlsx', 'xls', 'csv'])) {
+            $spreadsheet = IOFactory::load($filePath);
+            $sheet = $spreadsheet->getActiveSheet();
             
-            if (!file_exists($filePath)) {
-                return response()->json(['error' => 'Arquivo não encontrado'], 404);
-            }
+            // Método mais seguro para extrair dados
+            $data = $sheet->toArray();
             
-            $extension = pathinfo($filePath, PATHINFO_EXTENSION);
-            $preview = json_decode($excelTable->preview_data, true);
-            
-            if (($preview['type'] ?? null) === 'spreadsheet') {
-                $spreadsheet = IOFactory::load($filePath);
-                $sheet = $spreadsheet->getActiveSheet();
-                
+            // Verifica se há dados
+            if (empty($data)) {
+                \Log::warning("Arquivo Excel vazio", ['id' => $id]);
                 return response()->json([
-                    'headers' => $sheet->rangeToArray('A1:Z1')[0],
-                    'data' => $sheet->rangeToArray('A2:Z' . $sheet->getHighestRow()),
+                    'headers' => [],
+                    'data' => [],
                     'type' => 'spreadsheet'
                 ]);
             }
-            elseif (($preview['type'] ?? null) === 'xml') {
-                $xml = simplexml_load_file($filePath);
-                $json = json_encode($xml);
-                $array = json_decode($json, true);
-                
-                return response()->json([
-                    'headers' => array_keys($array[0] ?? []),
-                    'data' => $array,
-                    'type' => 'xml'
-                ]);
-            }
             
-            return response()->json(['error' => 'Formato não suportado'], 400);
+            // Extrai headers (primeira linha)
+            $headers = isset($data[0]) ? $data[0] : [];
             
-        } catch (\Exception $e) {
-            Log::error("Erro ao carregar arquivo: " . $e->getMessage());
+            // Extrai dados (linhas restantes)
+            $tableData = count($data) > 1 ? array_slice($data, 1) : [];
+            
             return response()->json([
-                'error' => 'Erro ao processar arquivo',
-                'message' => env('APP_DEBUG') ? $e->getMessage() : null
-            ], 500);
+                'headers' => $headers,
+                'data' => $tableData,
+                'type' => 'spreadsheet'
+            ]);
         }
+        
+        return response()->json(['error' => 'Formato não suportado'], 400);
+        
+    } catch (\Exception $e) {
+        \Log::error("Erro ao carregar arquivo", [
+            'id' => $id,
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+        return response()->json([
+            'error' => 'Erro ao processar arquivo',
+            'message' => env('APP_DEBUG') ? $e->getMessage() : null
+        ], 500);
     }
+}
 
 
     public function show(ExcelTable $excelTable)
@@ -239,3 +258,9 @@ public function indexView()
         return response()->json($tables);
     }
 }
+
+// \Log::info("Carregando arquivo", [
+//     'id' => $id,
+//     'path' => $filePath,
+//     'exists' => file_exists($filePath) ? 'sim' : 'não'
+// ]);
